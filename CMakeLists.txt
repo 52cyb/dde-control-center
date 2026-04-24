@@ -178,15 +178,13 @@ endif()
 find_package(GTest REQUIRED)
 find_package(Threads REQUIRED)
 
-# Check if dde-api eventlogger.hpp exists
-# Unset cache to force re-detection every time
-unset(DDE_API_EVENTLOGGER_INCLUDE_DIR CACHE)
-find_path(DDE_API_EVENTLOGGER_INCLUDE_DIR NAMES dde-api/eventlogger.hpp PATHS /usr/include)
-if(DDE_API_EVENTLOGGER_INCLUDE_DIR)
+# Check if dde-api provides EventLogger (header-only)
+find_package(DDEAPI QUIET)
+if(DDEAPI_FOUND)
     set(HAVE_DDE_API_EVENTLOGGER ON)
-    message(STATUS "Found dde-api eventlogger.hpp: ${DDE_API_EVENTLOGGER_INCLUDE_DIR}")
+    message(STATUS "Found DDEAPI: EventLogger available")
 else()
-    message(STATUS "dde-api eventlogger.hpp not found, event logging will be disabled")
+    message(STATUS "DDEAPI not found, event logging will be disabled")
 endif()
 
 if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "sw_64")

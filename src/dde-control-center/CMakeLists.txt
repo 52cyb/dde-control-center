@@ -71,6 +71,7 @@ target_link_libraries(${Control_Center_Name} PRIVATE
 
 if (HAVE_DDE_API_EVENTLOGGER)
     target_compile_definitions(${Control_Center_Name} PRIVATE HAVE_DDE_API_EVENTLOGGER)
+    target_link_libraries(${Control_Center_Name} PRIVATE DDEAPI::EventLogger)
 endif()
 
 file(GLOB_RECURSE DCC_Translation_QML_FILES ${DCC_PROJECT_ROOT_DIR}/qml/*.qml ${DCC_PROJECT_ROOT_DIR}/src/*.qml)
