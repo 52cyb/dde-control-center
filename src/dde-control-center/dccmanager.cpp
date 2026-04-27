@@ -67,6 +67,7 @@ DccManager::DccManager(QObject *parent)
     , m_imageProvider(nullptr)
     , m_sidebarWidth(-1)
     , m_showTimer(nullptr)
+    , m_showFallbackTimer(nullptr)
 #ifdef HAVE_DDE_API_EVENTLOGGER
     , m_pageStayTimer(nullptr)
 #endif
@@ -97,10 +98,15 @@ DccManager::DccManager(QObject *parent)
 
     initConfig();
     connect(m_plugins, &PluginManager::addObject, this, &DccManager::addObject);
-    connect(m_plugins, &PluginManager::loadAllFinished, this, &DccManager::tryShow, Qt::QueuedConnection);
+    connect(m_plugins, &PluginManager::loadAllFinished, this, &DccManager::handleShowReady, Qt::QueuedConnection);
     m_showTimer = new QTimer(this);
+    m_showTimer->setInterval(60);
+    m_showTimer->setSingleShot(true);
     connect(m_showTimer, &QTimer::timeout, this, &DccManager::tryShow);
-    m_showTimer->start(5000); // 防止插件卡死不显示界面
+    m_showFallbackTimer = new QTimer(this);
+    m_showFallbackTimer->setSingleShot(true);
+    connect(m_showFallbackTimer, &QTimer::timeout, this, &DccManager::tryShowFallback);
+    m_showFallbackTimer->start(5000); // 防止插件卡死不显示界面
 }
 
 DccManager::~DccManager()
@@ -749,89 +755,116 @@ void DccManager::handleScreenAdded(QScreen *screen)
     m_window->requestActivate();
 }
 
+QString DccManager::parseShowPageUrl(const QString &url, QString &cmd) const
+{
+    const int i = url.indexOf('?');
+    cmd = i != -1 ? url.mid(i + 1) : QString();
+    return url.mid(0, i).split('/', Qt::SkipEmptyParts).join('/'); // 移除多余的/
+}
+
+void DccManager::replyShowPageRequest(const QString &url, const QDBusMessage &message, bool found) const
+{
+    if (message.type() == QDBusMessage::InvalidMessage) {
+        return;
+    }
+
+    if (found) {
+        QDBusConnection::sessionBus().send(message.createReply());
+    } else {
+        QDBusConnection::sessionBus().send(message.createErrorReply(QDBusError::InvalidArgs, QString("not found url:") + url));
+    }
+}
+
+void DccManager::startPendingShow(const QString &url, const QDBusMessage &message)
+{
+    m_showUrl = url;
+    m_showMessage = message;
+    m_showTimer->start();
+}
+
 void DccManager::waitShowPage(const QString &url, const QDBusMessage message)
 {
     qCInfo(dccLog()) << "show page:" << url;
     clearShowParam();
+    m_showFallbackTimer->stop();
     if (m_plugins->isDeleting()) {
         return;
     }
+
     DccObject *obj = nullptr;
     QString cmd;
     if (url.isEmpty()) {
         obj = m_root;
-        DccManager::showPage(obj, QString());
+        showPage(obj, QString());
     } else {
-        int i = url.indexOf('?');
-        cmd = i != -1 ? url.mid(i + 1) : QString();
-        QString path = url.mid(0, i).split('/', Qt::SkipEmptyParts).join('/'); // 移除多余的/
-        auto objs = findObjects(path, true);
+        const QString path = parseShowPageUrl(url, cmd);
+        const auto objs = findObjects(path, true);
         obj = objs.isEmpty() ? nullptr : objs.first();
         if (obj) {
-            DccManager::showPage(obj, cmd);
+            showPage(obj, cmd);
         } else if (!m_plugins->loadFinished()) {
-            m_showUrl = url;
-            m_showMessage = message;
-            if (!m_showTimer) {
-                m_showTimer = new QTimer(this);
-                connect(m_showTimer, &QTimer::timeout, this, &DccManager::tryShow);
-            }
-            m_showTimer->start(50);
+            startPendingShow(url, message);
             return;
         }
     }
-    if (message.type() != QDBusMessage::InvalidMessage) {
-        if (obj) {
-            QDBusConnection::sessionBus().send(message.createReply());
-        } else {
-            QDBusConnection::sessionBus().send(message.createErrorReply(QDBusError::InvalidArgs, QString("not found url:") + url));
-        }
-    }
+
+    replyShowPageRequest(url, message, obj);
 }
 
 void DccManager::clearShowParam()
 {
-    if (m_showTimer) {
-        m_showTimer->stop();
-        m_showTimer->deleteLater();
-        m_showTimer = nullptr;
-    }
+    m_showTimer->stop();
     if (!m_showUrl.isEmpty()) {
         m_showUrl.clear();
         m_showMessage = QDBusMessage();
     }
 }
 
+void DccManager::handleShowReady()
+{
+    if (!m_showUrl.isEmpty()) {
+        tryShow();
+    } else if (m_showFallbackTimer->isActive() && !m_activeObject) {
+        tryShowFallback();
+    }
+}
+
 void DccManager::tryShow()
 {
-    if (m_showUrl.isEmpty() && m_showTimer) {
-        clearShowParam();
-        showPage(m_root, QString());
-        return;
-    }
     if (m_showUrl.isEmpty()) {
-        clearShowParam();
         return;
     }
-    int i = m_showUrl.indexOf('?');
-    QString cmd = i != -1 ? m_showUrl.mid(i + 1) : QString();
-    QString path = m_showUrl.mid(0, i).split('/', Qt::SkipEmptyParts).join('/'); // 移除多余的/
+
+    QString cmd;
+    const QString path = parseShowPageUrl(m_showUrl, cmd);
     DccObject *obj = findObject(path);
     if (obj) {
+        const QString url = m_showUrl;
+        const QDBusMessage message = m_showMessage;
+        clearShowParam();
         showPage(obj, cmd);
-        if (m_showMessage.type() != QDBusMessage::InvalidMessage) {
-            QDBusConnection::sessionBus().send(m_showMessage.createReply());
-        }
-        clearShowParam();
+        replyShowPageRequest(url, message, true);
     } else if (m_plugins->loadFinished()) {
-        if (m_showMessage.type() != QDBusMessage::InvalidMessage) {
-            QDBusConnection::sessionBus().send(m_showMessage.createErrorReply(QDBusError::InvalidArgs, QString("not found url:") + m_showUrl));
-        }
+        const QString url = m_showUrl;
+        const QDBusMessage message = m_showMessage;
         clearShowParam();
+        replyShowPageRequest(url, message, false);
         if (!m_activeObject) {
             showPage(m_root, QString());
         }
+    } else if (!m_plugins->isDeleting()) {
+        m_showTimer->start();
     }
+}
+
+void DccManager::tryShowFallback()
+{
+    if (m_plugins->isDeleting() || !m_showUrl.isEmpty() || m_activeObject) {
+        return;
+    }
+
+    m_showFallbackTimer->stop();
+    showPage(m_root, QString());
 }
 
 void DccManager::doShowPage(QPointer<DccObject> obj, const QString &cmd)
@@ -839,6 +872,7 @@ void DccManager::doShowPage(QPointer<DccObject> obj, const QString &cmd)
     if (m_plugins->isDeleting() || !obj) {
         return;
     }
+    m_showFallbackTimer->stop();
     qCInfo(dccLog) << "ShowPage:" << obj << " have cmd:" << !cmd.isEmpty();
     // 禁用首页
     if (obj == m_root) {

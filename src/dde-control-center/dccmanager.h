@@ -100,13 +100,18 @@ private:
     const DccObject *findParent(const DccObject *obj);
     bool eventFilter(QObject *watched, QEvent *event) override;
     bool isIndicatorShown(const QString &cmd) const;
+    QString parseShowPageUrl(const QString &url, QString &cmd) const;
+    void replyShowPageRequest(const QString &url, const QDBusMessage &message, bool found) const;
+    void startPendingShow(const QString &url, const QDBusMessage &message);
 
 private Q_SLOTS:
     void saveSize();
     void handleScreenAdded(QScreen *screen);
     void waitShowPage(const QString &url, const QDBusMessage message);
     void clearShowParam();
+    void handleShowReady();
     void tryShow();
+    void tryShowFallback();
     void doShowPage(QPointer<DccObject> obj, const QString &cmd);
     void updateModuleConfig(const QString &key);
     void onVisible(bool visible);
@@ -142,6 +147,7 @@ private:
     int m_sidebarWidth;
     // DBus调用时，对应项还没加载完成，此处保存跳转参数
     QTimer *m_showTimer;
+    QTimer *m_showFallbackTimer;
     QString m_showUrl;
     QDBusMessage m_showMessage;
 

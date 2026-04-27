@@ -100,8 +100,8 @@ void X11Worker::setMovedWindowOpacity(bool value)
         m_personalizationDBusProxy->unloadEffect(EffectMoveWindowArg);
     }
 
-    //设置kwin接口后, 等待50ms给kwin反应，根据isEffectLoaded返回值确定真实状态
-    QTimer::singleShot(50, [this] {
+    //设置kwin接口后, 等待55ms给kwin反应，根据isEffectLoaded返回值确定真实状态
+    QTimer::singleShot(55, this, [this] {
         bool isLoaded =  m_personalizationDBusProxy->isEffectLoaded(EffectMoveWindowArg);
         qCDebug(DdcPersonnalizationX11Worker) << "Moved window switch WM, load effect translucency: " << isLoaded;
         m_model->setIsMoveWindow(isLoaded);
