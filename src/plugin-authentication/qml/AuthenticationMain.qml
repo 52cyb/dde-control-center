@@ -258,6 +258,11 @@ DccObject {
                             timeout: 3000
                             visible: false
 
+                            on_ExpiredChanged: {
+                                if (_expired && visible)
+                                    visible = false
+                            }
+
                             function show(msg) {
                                 text = msg;
                                 visible = true;                                
