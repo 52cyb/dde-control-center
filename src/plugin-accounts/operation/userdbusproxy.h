@@ -7,6 +7,8 @@
 
 #include <QObject>
 #include <QDBusPendingReply>
+#include <QDBusReply>
+#include <QDBusUnixFileDescriptor>
 
 class QDBusInterface;
 class QDBusMessage;
@@ -190,7 +192,7 @@ public slots:
     QDBusPendingReply<> SetPasswordHint(const QString &hint);
     QDBusPendingReply<> SetShell(const QString &shell);
     QDBusPendingReply<QList<int>> GetSecretQuestions();
-    QDBusPendingReply<> SetSecretQuestions(const QMap<int, QByteArray> &securityQuestions);
+    QDBusReply<void> SetSecretQuestions(const QDBusUnixFileDescriptor &fd);
     QDBusPendingReply<> SetQuickLogin(bool enabled);
     QDBusPendingReply<> EnableWechatAuth(bool enabled);
 

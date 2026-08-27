@@ -83,6 +83,8 @@ Q_SIGNALS:
     void noPassWordLoginVisableChanged(bool noPassword);
     void isCancelChanged();
     void adminCntChange(const int adminCnt);
+    void securityQuestionsSetFinished(const QString &userId, const QString &error);
+    void securityQuestionsCheckReplied(const QString &userId, const QList<int> &questions);
 
 private:
     bool m_autoLoginVisable;

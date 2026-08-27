@@ -16,9 +16,7 @@ D.DialogWindow {
     id: dialog
     width: 460
     minimumWidth: width
-    minimumHeight: height
     maximumWidth: minimumWidth
-    maximumHeight: minimumHeight
     icon: "preferences-system"
     modality: Qt.WindowModal
     title: qsTr("Create a new account")
@@ -322,6 +320,7 @@ D.DialogWindow {
         PasswordLayout {
             id: pwdLayout
             currentPwdVisible: false
+            contentBottomMargin: sqCheckBox.visible ? 0 : 30
             Layout.leftMargin: 2 - DS.Style.dialogWindow.contentHMargin
             Layout.rightMargin: 6 - DS.Style.dialogWindow.contentHMargin
             Layout.topMargin: 0
@@ -333,6 +332,28 @@ D.DialogWindow {
 
                 return nameEdit.text
             }
+        }
+
+        D.CheckBox {
+            id: sqCheckBox
+            text: qsTr("Set security questions")
+            font: D.DTK.fontManager.t6
+            // 与 gerrit 一致：DConfig securityQuestions 为 Hidden 时隐藏；daemon 不支持时隐藏
+            visible: dccData.securityQuestionsStatus !== "Hidden" && dccData.hasSecretKeyInterface()
+            enabled: dccData.securityQuestionsStatus !== "Disabled"
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 3
+            Layout.bottomMargin: 10
+        }
+
+        SecurityQuestionsLayout {
+            id: sqLayout
+            labelWidth: pwdLayout.maxLabelWidth
+            visible: sqCheckBox.checked && dccData.securityQuestionsStatus !== "Hidden" && dccData.hasSecretKeyInterface()
+            required: sqCheckBox.checked
+            Layout.leftMargin: 12 - DS.Style.dialogWindow.contentHMargin
+            Layout.rightMargin: 6 - DS.Style.dialogWindow.contentHMargin
+            Layout.bottomMargin: 40
         }
 
         RowLayout {
@@ -362,10 +383,15 @@ D.DialogWindow {
                     if (!pwdLayout.checkPassword())
                         return
 
+                    if (sqCheckBox.checked && !sqLayout.validate())
+                        return
+
                     var info = pwdLayout.getPwdInfo()
                     info["type"] = userType.currentIndex
                     info["name"] = namesContainter.eidtItems[0].text
                     info["fullname"] = namesContainter.eidtItems[1].text
+                    if (sqCheckBox.checked)
+                        info["securityQuestions"] = sqLayout.collectQuestions()
 
                     dccData.addUser(info)
                     createButton.enabled = false

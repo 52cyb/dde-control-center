@@ -7,8 +7,21 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QList>
+#include <QByteArray>
 
 static const QString NO_PASSWORD { "NP" };
+
+struct SecretQuestionItem {
+    Q_GADGET
+    Q_PROPERTY(int ID MEMBER id)
+    Q_PROPERTY(QByteArray EncryptedAnswer MEMBER encryptedAnswer)
+public:
+    int id = 0;
+    QByteArray encryptedAnswer;
+};
+
+Q_DECLARE_METATYPE(SecretQuestionItem)
 
 namespace dccV25 {
 
@@ -68,6 +81,9 @@ public:
 
     inline QString passwordHint() const { return m_passwordHint; }
     void setPasswordHint(const QString &passwordHint);
+
+    inline QList<SecretQuestionItem> securityQuestions() const { return m_securityQuestions; }
+    void setSecurityQuestions(const QList<SecretQuestionItem> &securityQuestions);
 
     inline bool online() const { return m_online; }
     void setOnline(bool online);
@@ -145,6 +161,7 @@ private:
     quint64 m_createdTime;
     QString m_gid;
     QString m_passwordHint;
+    QList<SecretQuestionItem> m_securityQuestions;
     QString m_id;
     SecurityLever m_securityLever;
 

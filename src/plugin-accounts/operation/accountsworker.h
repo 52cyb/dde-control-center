@@ -56,6 +56,9 @@ Q_SIGNALS:
     void updateGroupFinished(OperateType operation, bool successfully, const QString& groupName = QString());
     void updateGroupFailed(const QString& groupName = QString());
     void createGroupFailed(const QString& groupName = QString());
+    void checkAuthSuccess(const QString &action);
+    void checkAuthError(const QString &error, const QString &action);
+    void hasSecretKeyInterfaceAvailable(bool available);
 public Q_SLOTS:
     void randomUserIcon(User *user);
     void createAccount(const User *user);
@@ -85,7 +88,12 @@ public Q_SLOTS:
     void removeUser(const QString &userPath);
     void setGroups(User *user, const QStringList &usrGroups);
     void setPasswordHint(User *user, const QString &passwordHint);
-    void setSecurityQuestions(User *user, const QMap<int, QByteArray> &securityQuestions);
+    void requestSecurityQuestionsAuth(const QString &userPath);
+    void cancelSecurityQuestions();
+    void setSecurityQuestions(User *user, const QList<SecretQuestionItem> &securityQuestions);
+    void checkHasSecretKeyInterface();
+    // 临时测试：加密安全问题答案（用于登录方式页的调试按钮）
+    QString encryptSecurityAnswer(const QString &answer) { return cryptUserPassword(answer); }
     void deleteGroup(const QString &group);
     void createGroup(const QString &group, uint32_t gid, bool isSystem);
     void modifyGroup(const QString &oldGroup, const QString &newGroup, uint32_t gid);
@@ -96,6 +104,7 @@ public Q_SLOTS:
     void checkPwdLimitLevel(int level);
     void showDefender();
     void playSystemSound(int soundType);
+    bool hasSecretKeyInterface() const;
 
 private Q_SLOTS:
     void updateUserOnlineStatus(const QList<QDBusObjectPath> &paths);
@@ -111,7 +120,7 @@ private:
     QString cryptUserPassword(const QString &password);
     QString tryEncryptPassword(const QString &password, const QString &algorithm);
     BindCheckResult checkLocalBind(const QString &uosid, const QString &uuid);
-    QList<int> securityQuestionsCheck();
+    QList<int> securityQuestionsCheck(User *user);
 
 private:
     AccountsDBusProxy *m_accountsInter;
@@ -123,6 +132,8 @@ private:
     QStringList m_onlineUsers;
     UserModel *m_userModel;
     Dtk::Core::DConfig *m_accountCfg;
+    int m_sqWriteFd = -1;
+    bool m_hasSecretKeyInterface = true;  // daemon 是否支持安全问题重置密码功能
 };
 
 }   // namespace dccV25

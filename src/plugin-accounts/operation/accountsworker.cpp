@@ -37,6 +37,16 @@
 #include <qlogging.h>
 using namespace PolkitQt1;
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <sys/mman.h>
+
+#include <QDBusUnixFileDescriptor>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
 using namespace dccV25;
 DCORE_USE_NAMESPACE
 DGUI_USE_NAMESPACE
@@ -50,6 +60,8 @@ const QList<QPair<QString, QString>> kPasswordAlgorithmPrefixes = {
     {"sha512",   "$6$"},
     {"sha256",   "$5$"}
 };
+
+static const QString SecurityQuestionsAction = QStringLiteral("securityQuestionsAction");
 
 // 根据算法名称获取前缀的辅助函数
 QString getAlgorithmPrefix(const QString &algorithm) {
@@ -103,6 +115,8 @@ AccountsWorker::AccountsWorker(UserModel *userList, QObject *parent)
 
     m_userModel->setQuickLoginVisible(m_accountsInter->quickLoginEnabled());
     connect(m_accountsInter, &AccountsDBusProxy::QuickLoginEnabledChanged, m_userModel, &UserModel::setQuickLoginVisible);
+
+    checkHasSecretKeyInterface();
 }
 
 void AccountsWorker::getAllGroups()
@@ -224,25 +238,32 @@ void AccountsWorker::asyncSecurityQuestionsCheck(User *user)
     QFutureWatcher<QList<int>> *watcher = new QFutureWatcher<QList<int>>(this);
     connect(watcher, &QFutureWatcher<QList<int>>::finished, [user, watcher] {
         QList<int> result = watcher->result();
-        if (result.size() != SECURITY_QUESTIONS_ERROR_COUNT)
+        if (result.size() != SECURITY_QUESTIONS_ERROR_COUNT) {
             Q_EMIT user->startSecurityQuestionsCheckReplied(result);
+        } else {
+            qWarning() << "Async security questions check failed, user:" << (user ? user->name() : "null");
+        }
 
         watcher->deleteLater();
     });
-    QFuture<QList<int>> future = QtConcurrent::run(&AccountsWorker::securityQuestionsCheck, this);
+    QFuture<QList<int>> future = QtConcurrent::run(&AccountsWorker::securityQuestionsCheck, this, user);
     watcher->setFuture(future);
 }
 
-QList<int> AccountsWorker::securityQuestionsCheck()
+QList<int> AccountsWorker::securityQuestionsCheck(User *user)
 {
-    QDBusPendingReply<QList<int>> reply = m_userQInter->GetSecretQuestions();
-    if (!reply.error().message().isEmpty()) {
-        qWarning() << reply.error().message();
+    UserDBusProxy *userInter = m_userInters.value(user);
+    if (!userInter) {
+        qWarning() << "Security questions check failed, user interface is null, user:" << (user ? user->name() : "null");
+        return {-1};
     }
-    if (reply.isValid()) {
-        return reply.value();
+    QDBusPendingReply<QList<int>> reply = userInter->GetSecretQuestions();
+    reply.waitForFinished();
+    if (reply.isError()) {
+        qWarning() << "Security questions check failed, GetSecretQuestions error:" << reply.error().message();
+        return {-1};
     }
-    return {-1};
+    return reply.value();
 }
 
 void AccountsWorker::setPasswordHint(User *user, const QString &passwordHint)
@@ -253,15 +274,130 @@ void AccountsWorker::setPasswordHint(User *user, const QString &passwordHint)
     userInter->SetPasswordHint(passwordHint);
 }
 
-void AccountsWorker::setSecurityQuestions(User *user, const QMap<int, QByteArray> &securityQuestions)
+void AccountsWorker::requestSecurityQuestionsAuth(const QString &)
 {
-    QDBusPendingReply<void> reply =  m_userQInter->SetSecretQuestions(securityQuestions);
+    qInfo() << "Request security questions auth via daemon";
+    // 清理旧 fd
+    if (m_sqWriteFd >= 0) {
+        ::close(m_sqWriteFd);
+        m_sqWriteFd = -1;
+    }
+
+    // 创建 pipe：前端持有写端，读端传给 daemon
+    int fds[2];
+    if (::pipe(fds) != 0) {
+        qWarning() << "Request security questions auth failed, pipe create error, errno:" << errno;
+        Q_EMIT checkAuthError(QStringLiteral("pipe failed"), SecurityQuestionsAction);
+        return;
+    }
+
+    // 读端通过 SetSecretQuestions 传给 daemon，daemon 完成鉴权
+    QDBusUnixFileDescriptor dbusReadFd(fds[0]);
+    ::close(fds[0]); // QDBusUnixFileDescriptor 构造时已 dup，关闭原始读端防止 fd 泄漏
+    QDBusReply<void> reply = m_userQInter->SetSecretQuestions(dbusReadFd);
+    // 调用返回后 daemon 已完成鉴权：
+    //   - 成功：daemon 持有读端 dup，启动 goroutine 等待数据
+    //   - 失败：daemon 已关闭读端
+
     if (reply.isValid()) {
-        Q_EMIT user->setSecurityQuestionsReplied(reply.error().message());
+        m_sqWriteFd = fds[1]; // 保存写端
+        Q_EMIT checkAuthSuccess(SecurityQuestionsAction);
+    } else {
+        qWarning() << "Request security questions auth failed:" << reply.error().message();
+        ::close(fds[1]); // 鉴权失败，关闭写端
+        Q_EMIT checkAuthError(reply.error().message(), SecurityQuestionsAction);
     }
-    if (!reply.error().message().isEmpty()) {
-        Q_EMIT user->setSecurityQuestionsReplied(reply.error().message() + "error");
+}
+
+void AccountsWorker::setSecurityQuestions(User *user, const QList<SecretQuestionItem> &securityQuestions)
+{
+    if (m_sqWriteFd < 0) {
+        qWarning() << "Set security questions expired, no write fd, user:" << (user ? user->name() : "null");
+        Q_EMIT user->setSecurityQuestionsReplied(QStringLiteral("expired"));
+        return;
     }
+
+    // 序列化为 JSON（含 committed 标识）
+    QJsonObject payload;
+    payload[QStringLiteral("committed")] = true;
+    QJsonArray arr;
+    for (const auto &item : securityQuestions) {
+        QJsonObject obj;
+        obj[QStringLiteral("id")] = item.id;
+        obj[QStringLiteral("encryptedAnswer")] = QString::fromLatin1(item.encryptedAnswer.toBase64());
+        arr.append(obj);
+    }
+    payload[QStringLiteral("questions")] = arr;
+    QByteArray data = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+
+    // 写入 pipe 写端并关闭，daemon 侧 goroutine 的 ReadAll 返回
+    // 循环写入确保数据完整传输，处理部分写入和写入失败场景
+    const char *writePtr = data.constData();
+    size_t writeRemaining = static_cast<size_t>(data.size());
+    while (writeRemaining > 0) {
+        ssize_t written = ::write(m_sqWriteFd, writePtr, writeRemaining);
+        if (written <= 0) {
+            qWarning() << "write security questions data failed, errno:" << errno;
+            break;
+        }
+        writePtr += written;
+        writeRemaining -= static_cast<size_t>(written);
+    }
+    ::close(m_sqWriteFd);
+    m_sqWriteFd = -1;
+
+    Q_EMIT user->setSecurityQuestionsReplied(QString());
+}
+
+void AccountsWorker::cancelSecurityQuestions()
+{
+    if (m_sqWriteFd >= 0) {
+        qInfo() << "Cancel security questions, closing fd without data";
+        ::close(m_sqWriteFd);
+        m_sqWriteFd = -1; // daemon 读到 EOF → len==0 → 丢弃
+    }
+}
+
+void AccountsWorker::checkHasSecretKeyInterface()
+{
+    if (!m_userQInter) {
+        qWarning() << "m_userQInter is null, can not check security question password reset interface";
+        return;
+    }
+
+    // 通过 DBus Introspect 查询接口中是否存在 HasSecretKey 方法
+    // 避免直接调用该方法（无副作用、仅查元数据）
+    const QDBusInterface *iface = m_userQInter->interface();
+    if (!iface) {
+        qWarning() << "Check security question password reset interface failed, user interface is null";
+        Q_EMIT hasSecretKeyInterfaceAvailable(true);
+        return;
+    }
+    QDBusInterface introspectable(
+        iface->service(),
+        iface->path(),
+        QLatin1String("org.freedesktop.DBus.Introspectable"),
+        iface->connection());
+    QDBusReply<QString> reply = introspectable.call(QLatin1String("Introspect"));
+    const QString xml = reply.isValid() ? reply.value() : QString();
+
+    if (xml.isEmpty()) {
+        // Introspect 失败（如 DBus 连接异常），保留默认值保持兼容
+        qWarning() << "Check security question password reset interface failed, introspect returned empty";
+        Q_EMIT hasSecretKeyInterfaceAvailable(true);
+        return;
+    }
+
+    const bool found = xml.contains(QLatin1String("<method name=\"HasSecretKey\""));
+    m_hasSecretKeyInterface = found;
+    Q_EMIT hasSecretKeyInterfaceAvailable(found);
+    qInfo() << "daemon security question password reset interface check:"
+            << (found ? "supported" : "NOT supported");
+}
+
+bool AccountsWorker::hasSecretKeyInterface() const
+{
+    return m_hasSecretKeyInterface;
 }
 
 void AccountsWorker::deleteGroup(const QString &group)
@@ -996,6 +1132,40 @@ CreationResult *AccountsWorker::createAccountInternal(const User *user)
         if (!groupResult)
             result->setMessage("set group for new created user failed");
         return result;
+    }
+
+    // 设置安全问题（失败不影响用户创建结果）
+    QList<SecretQuestionItem> securityQuestions = user->securityQuestions();
+    if (!securityQuestions.isEmpty()) {
+        QJsonArray arr;
+        for (const auto &item : securityQuestions) {
+            QJsonObject obj;
+            obj[QStringLiteral("id")] = item.id;
+            obj[QStringLiteral("encryptedAnswer")] = QString::fromLatin1(item.encryptedAnswer.toBase64());
+            arr.append(obj);
+        }
+        QJsonObject payload;
+        payload[QStringLiteral("questions")] = arr;
+        payload[QStringLiteral("committed")] = true;
+        QByteArray data = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+
+        int rawFd = memfd_create("sq-payload", MFD_CLOEXEC);
+        if (rawFd != -1) {
+            if (write(rawFd, data.constData(), static_cast<size_t>(data.size())) == -1
+                || lseek(rawFd, 0, SEEK_SET) == -1) {
+                close(rawFd);
+                qWarning() << "Set security questions failed, write error, errno:" << errno;
+            } else {
+                QDBusUnixFileDescriptor dbusFd(rawFd);
+                QDBusReply<void> sqReply = userDBus->SetSecretQuestions(dbusFd);
+                close(rawFd);
+                if (!sqReply.isValid()) {
+                    qWarning() << "Set security questions for new user failed:" << sqReply.error().message();
+                }
+            }
+        } else {
+            qWarning() << "Set security questions for new user failed, memfd_create error, errno:" << errno;
+        }
     }
 
     return result;

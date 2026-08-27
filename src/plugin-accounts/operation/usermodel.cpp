@@ -80,6 +80,12 @@ void UserModel::addUser(const QString &id, User *user)
     connect(user, &User::passwordAgeChanged, this, [this, user](const int age){
         Q_EMIT passwordAgeChanged(user->id(), age);
     });
+    connect(user, &User::setSecurityQuestionsReplied, this, [this, user](const QString &error){
+        Q_EMIT securityQuestionsSetFinished(user->id(), error);
+    });
+    connect(user, &User::startSecurityQuestionsCheckReplied, this, [this, user](const QList<int> &questions){
+        Q_EMIT securityQuestionsCheckReplied(user->id(), questions);
+    });
 
     Q_EMIT userAdded(user);
 }

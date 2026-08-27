@@ -13,6 +13,7 @@ import org.deepin.dtk.style 1.0 as DS
 DccTitleObject {
     id: loginMethodTitle
     property string userId
+    property bool sqAuthPending: false
     name: "loginMethodTitle"
     // parentName: ""
     displayName: qsTr("Login method")
@@ -189,7 +190,64 @@ DccTitleObject {
                         }
                     }
                 }
+                DccObject {
+                    id: securityQuestionsEntry
+                    name: loginMethodTitle.parentName + "SecurityQuestions"
+                    parentName: passwordGroupView.name
+                    displayName: qsTr("Password Reset Settings")
+                    canSearch: loginMethodTitle.canSearch
+                    weight: 13
+                    // 与 gerrit 一致：securityQuestions 配置为 Hidden 时隐藏；域账户隐藏；
+                    // daemon 不支持时隐藏
+                    visible: dccData.securityQuestionsStatus !== "Hidden"
+                             && !dccData.isDomainUser(loginMethodTitle.userId)
+                             && dccData.hasSecretKeyInterface()
+                    // 与 gerrit 一致：Disabled 置灰；仅当前用户可操作
+                    enabled: dccData.securityQuestionsStatus !== "Disabled"
+                             && dccData.currentUserId() === loginMethodTitle.userId
+                    pageType: DccObject.Editor
+                    page: D.Button {
+                        text: qsTr("Settings")
+                        onClicked: {
+                            if (loginMethodTitle.sqAuthPending)
+                                return
+                            loginMethodTitle.sqAuthPending = true
+                            dccData.requestSecurityQuestionsAuth()
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    Connections {
+        target: dccData
+        function onSecurityQuestionsAuthFinished(success, error) {
+            if (!loginMethodTitle.sqAuthPending)
+                return
+            loginMethodTitle.sqAuthPending = false
+            if (success) {
+                sqDialogLoader.active = true
+            } else {
+                console.warn("Security questions auth failed:", error)
+            }
+        }
+    }
+
+    Loader {
+        id: sqDialogLoader
+        active: false
+        sourceComponent: SecurityQuestionsDialog {
+            userId: loginMethodTitle.userId
+            onClosing: function (close) {
+                dccData.cancelSecurityQuestions()
+                sqDialogLoader.active = false
+            }
+        }
+        onLoaded: function () {
+            // 与 gerrit 一致：打开对话框时查询已设置的安全问题
+            dccData.asyncSecurityQuestionsCheck(loginMethodTitle.userId)
+            sqDialogLoader.item.show()
         }
     }
 }

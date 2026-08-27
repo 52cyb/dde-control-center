@@ -241,6 +241,8 @@ if (NOT DISABLE_PRIVACY_PLUGIN)
 endif()
 add_subdirectory(src/plugin-dock)
 
+add_subdirectory(src/security-question-helper)
+
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()

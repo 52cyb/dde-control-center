@@ -158,11 +158,11 @@ QDBusPendingReply<QList<int>> UserDBusProxy::GetSecretQuestions()
     return m_dBusAccountsUserInter->call(QStringLiteral("GetSecretQuestions"));
 }
 
-QDBusPendingReply<> UserDBusProxy::SetSecretQuestions(const QMap<int, QByteArray> &securityQuestions)
+QDBusReply<void> UserDBusProxy::SetSecretQuestions(const QDBusUnixFileDescriptor &fd)
 {
     QList<QVariant> argumentList;
-    argumentList << QVariant::fromValue(securityQuestions);
-    return m_dBusAccountsUserInter->asyncCallWithArgumentList(QStringLiteral("SetSecretQuestions"), argumentList);
+    argumentList << QVariant::fromValue(fd);
+    return m_dBusAccountsUserInter->callWithArgumentList(QDBus::Block, QStringLiteral("SetSecretQuestions"), argumentList);
 }
 
 QDBusPendingReply<> UserDBusProxy::SetQuickLogin(bool enabled)

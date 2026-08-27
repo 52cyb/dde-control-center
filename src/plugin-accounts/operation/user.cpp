@@ -107,6 +107,11 @@ void User::setPasswordHint(const QString &passwordHint)
     m_passwordHint = passwordHint;
 }
 
+void User::setSecurityQuestions(const QList<SecretQuestionItem> &securityQuestions)
+{
+    m_securityQuestions = securityQuestions;
+}
+
 void User::setOnline(bool online)
 {
     if (m_online != online) {

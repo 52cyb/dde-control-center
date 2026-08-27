@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RCC>
+    <qresource prefix="/security-question-helper">
+        <file alias="main.qml">main.qml</file>
+        <file alias="SecurityQuestionVerificationDialog.qml">SecurityQuestionVerificationDialog.qml</file>
+        <file alias="PasswordResetDialog.qml">PasswordResetDialog.qml</file>
+    </qresource>
+</RCC>

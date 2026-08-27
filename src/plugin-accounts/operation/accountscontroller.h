@@ -14,6 +14,10 @@
 #include <QHash>
 #include <QtQml/qqml.h>
 
+DCORE_BEGIN_NAMESPACE
+class DConfig;
+DCORE_END_NAMESPACE
+
 namespace dccV25 {
 
 class AccountsController : public QObject
@@ -23,6 +27,7 @@ class AccountsController : public QObject
     Q_PROPERTY(QStringList userIdList READ userIdList NOTIFY userIdListChanged FINAL)
     Q_PROPERTY(QStringList onlineUserList READ onlineUserList NOTIFY onlineUserListChanged FINAL)
     Q_PROPERTY(bool isQuickLoginVisible READ isQuickLoginVisible NOTIFY quickLoginVisibleChanged FINAL)
+    Q_PROPERTY(QString securityQuestionsStatus READ securityQuestionsStatus NOTIFY securityQuestionsStatusChanged FINAL)
 public:
     explicit AccountsController(QObject *parent = nullptr);
     virtual ~AccountsController();
@@ -102,6 +107,18 @@ public slots:
     void deleteUserIcon(const QString &id, const QString &iconFile);
     void cleanupTempPreviewFiles(const QStringList &files);
 
+    // 安全问题重置密码后端
+    void requestSecurityQuestionsAuth();
+    void cancelSecurityQuestions();
+    void setSecurityQuestions(const QString &id, const QVariantList &questions);
+    void asyncSecurityQuestionsCheck(const QString &id);
+    bool hasSecretKeyInterface() const;
+    QString encryptSecurityAnswer(const QString &answer);
+    // 读取 DConfig securityQuestions 状态：Enabled/Disabled/Hidden
+    QString securityQuestionsStatus() const;
+    // 判断用户是否为域账户（LDAP "domain users" 组 或 udcp.iam GetUserGroups 非空）
+    bool isDomainUser(const QString &id) const;
+
 signals:
     void currentUserNameChanged();
     void userIdListChanged();
@@ -123,6 +140,11 @@ signals:
     void showSafetyPage(const QString &errorTips);
     void accountCreationFinished(CreationResult::ResultType resultType, const QString &message);
     void quickLoginVisibleChanged();
+    void securityQuestionsAuthFinished(bool success, const QString &error);
+    void securityQuestionsSetFinished(const QString &error);
+    void securityQuestionsCheckReplied(const QString &userId, const QVariantList &questions);
+    void hasSecretKeyInterfaceChanged(bool available);
+    void securityQuestionsStatusChanged();
 protected:
     bool isSystemAdmin(const User *user) const;
     int adminCount() const;
@@ -135,6 +157,7 @@ private:
     QAbstractListModel    *m_accountsModel = nullptr;
     QHash<QString, QStringList> m_groups;
     QAbstractItemModel    *m_groupsModel = nullptr;
+    Dtk::Core::DConfig    *m_accountDConfig = nullptr;
     bool m_isCreatingUser = false;
 };
 

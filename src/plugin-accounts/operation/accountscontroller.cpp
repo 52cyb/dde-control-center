@@ -9,10 +9,14 @@
 #include "accountlistmodel.h"
 #include <qlogging.h>
 
+#include <DConfig>
+
 #include <QFileInfo>
 #include <QDir>
 #include <QStandardPaths>
 #include <QPainter>
+#include <QDBusInterface>
+#include <QDBusReply>
 #include <QUrl>
 #include <QVariantMap>
 #include <QRegularExpression>
@@ -101,6 +105,35 @@ AccountsController::AccountsController(QObject *parent)
     });
 
     connect(m_model, &UserModel::quickLoginVisibleChanged, this, &AccountsController::quickLoginVisibleChanged);
+
+    connect(m_worker, &AccountsWorker::hasSecretKeyInterfaceAvailable, this, &AccountsController::hasSecretKeyInterfaceChanged);
+
+    connect(m_worker, &AccountsWorker::checkAuthSuccess, this, [this](const QString &) {
+        Q_EMIT securityQuestionsAuthFinished(true, QString());
+    });
+    connect(m_worker, &AccountsWorker::checkAuthError, this, [this](const QString &error, const QString &) {
+        Q_EMIT securityQuestionsAuthFinished(false, error);
+    });
+
+    connect(m_model, &UserModel::securityQuestionsSetFinished, this, [this](const QString &, const QString &error) {
+        Q_EMIT securityQuestionsSetFinished(error);
+    });
+    connect(m_model, &UserModel::securityQuestionsCheckReplied, this, [this](const QString &userId, const QList<int> &questions) {
+        QVariantList qs;
+        for (int q : questions)
+            qs.append(q);
+        Q_EMIT securityQuestionsCheckReplied(userId, qs);
+    });
+
+    // 读取 DConfig securityQuestions 状态，供 QML 控制安全问题重置入口可见性
+    m_accountDConfig = Dtk::Core::DConfig::create("org.deepin.dde.control-center",
+                                                  "org.deepin.dde.control-center.accounts", QString(), this);
+    if (m_accountDConfig) {
+        connect(m_accountDConfig, &Dtk::Core::DConfig::valueChanged, this, [this](const QString &key) {
+            if (key == "securityQuestions")
+                Q_EMIT securityQuestionsStatusChanged();
+        });
+    }
 
     QMetaObject::invokeMethod(m_worker, "active", Qt::QueuedConnection);
 }
@@ -618,6 +651,19 @@ void AccountsController::addUser(const QVariantMap &info)
     user->setRepeatPassword(pwdRepeat);
     user->setPasswordHint(pwdHint);
 
+    // 安全问题（可选，创建时一并写入，格式与 setSecurityQuestions 一致）
+    const QVariantList sqList = info["securityQuestions"].toList();
+    QList<SecretQuestionItem> items;
+    items.reserve(sqList.size());
+    for (const QVariant &v : sqList) {
+        const QVariantMap map = v.toMap();
+        SecretQuestionItem item;
+        item.id = map.value("id").toInt();
+        item.encryptedAnswer = map.value("encryptedAnswer").toByteArray();
+        items.append(item);
+    }
+    user->setSecurityQuestions(items);
+
     /* 设置用户组 */
     if (type == 1) {
         user->setUserType(User::UserType::Administrator);
@@ -658,6 +704,96 @@ void AccountsController::setPasswordHint(const QString &id, const QString &pwdHi
         if (!pwdHint.simplified().isEmpty())
             m_worker->setPasswordHint(user, pwdHint);
     }
+}
+
+void AccountsController::requestSecurityQuestionsAuth()
+{
+    if (!m_worker) {
+        qWarning() << "Request security questions auth failed, worker is null";
+        Q_EMIT securityQuestionsAuthFinished(false, QStringLiteral("worker is null"));
+        return;
+    }
+    qWarning() << "Request security questions auth for user:" << currentUserId();
+    m_worker->requestSecurityQuestionsAuth(QStringLiteral("/org/deepin/dde/Accounts1/User%1").arg(currentUserId()));
+}
+
+void AccountsController::cancelSecurityQuestions()
+{
+    if (m_worker)
+        m_worker->cancelSecurityQuestions();
+}
+
+void AccountsController::setSecurityQuestions(const QString &id, const QVariantList &questions)
+{
+    User *user = m_model->getUser(id);
+    if (!user || !m_worker) {
+        qWarning() << "Set security questions failed, user or worker is null, id:" << id;
+        return;
+    }
+
+    QList<SecretQuestionItem> items;
+    items.reserve(questions.size());
+    for (const QVariant &v : questions) {
+        const QVariantMap map = v.toMap();
+        SecretQuestionItem item;
+        item.id = map.value("id").toInt();
+        item.encryptedAnswer = map.value("encryptedAnswer").toByteArray();
+        items.append(item);
+    }
+    qWarning() << "Set security questions count:" << items.size() << "for user:" << id;
+    m_worker->setSecurityQuestions(user, items);
+}
+
+QString AccountsController::encryptSecurityAnswer(const QString &answer)
+{
+    return m_worker ? m_worker->encryptSecurityAnswer(answer) : QString();
+}
+
+void AccountsController::asyncSecurityQuestionsCheck(const QString &id)
+{
+    User *user = m_model->getUser(id);
+    if (user && m_worker) {
+        m_worker->asyncSecurityQuestionsCheck(user);
+    } else {
+        qWarning() << "Async security questions check failed, user or worker is null, id:" << id;
+    }
+}
+
+bool AccountsController::hasSecretKeyInterface() const
+{
+    return m_worker ? m_worker->hasSecretKeyInterface() : true;
+}
+
+QString AccountsController::securityQuestionsStatus() const
+{
+    if (m_accountDConfig)
+        return m_accountDConfig->value("securityQuestions", QStringLiteral("Enabled")).toString();
+    return QStringLiteral("Enabled");
+}
+
+bool AccountsController::isDomainUser(const QString &id) const
+{
+    User *user = m_model->getUser(id);
+    if (!user)
+        return false;
+
+    // LDAP 域账户：用户组包含 "domain users"
+    if (user->groups().contains(QStringLiteral("domain users")))
+        return true;
+
+    // 调用域管接口获取当前用户的组，不为空则为域管用户（与 gerrit 一致）
+    QDBusInterface iam(QStringLiteral("com.deepin.udcp.iam"),
+                       QStringLiteral("/com/deepin/udcp/iam"),
+                       QStringLiteral("com.deepin.udcp.iam"),
+                       QDBusConnection::systemBus());
+    if (!iam.isValid())
+        return false;
+
+    QDBusReply<QStringList> reply = iam.call(QStringLiteral("GetUserGroups"), user->name());
+    if (reply.error().type() == QDBusError::NoError && !reply.value().isEmpty())
+        return true;
+
+    return false;
 }
 
 int AccountsController::passwordAge(const QString &id) const

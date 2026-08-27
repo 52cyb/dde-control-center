@@ -18,6 +18,7 @@ ColumnLayout {
     spacing: 0
     
     property int maxLabelWidth: 100
+    property int contentBottomMargin: 30
 
     signal requestClose()
     signal labelWidthCalculated()
@@ -249,7 +250,7 @@ ColumnLayout {
         Layout.alignment: Qt.AlignTop | Qt.AlignHCenter
         Layout.rightMargin: 0
         Layout.topMargin: 4 - DS.Style.dialogWindow.contentHMargin
-        Layout.bottomMargin: 30
+        Layout.bottomMargin: pwdLayout.contentBottomMargin
         implicitHeight: 150
         color: "transparent"
 

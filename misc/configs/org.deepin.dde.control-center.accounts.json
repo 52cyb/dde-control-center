@@ -12,6 +12,17 @@
             "description[zh_CN]": "控制中心账户图像路径配置",
             "permissions": "readwrite",
             "visibility": "public"
+        },
+        "securityQuestions": {
+            "value": "Enabled",
+            "serial": 0,
+            "flags": ["global"],
+            "name": "security_Questions",
+            "name[zh_CN]": "通过安全问题找回密码",
+            "description[zh_CN]": "控制账户模块中'通过安全问题找回密码'功能的显示状态。\n功能：允许用户设置和验证安全问题，用于忘记密码时找回密码。\n值含义：\n- Enabled：正常显示安全问题设置功能\n- Disabled：置灰显示，用户无法操作\n- Hidden：完全隐藏该功能",
+            "description": "",
+            "permissions": "readwrite",
+            "visibility": "private"
         }
     }
   }
