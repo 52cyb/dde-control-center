@@ -103,7 +103,7 @@ public:
     void setSecurityLever(const SecurityLever &securityLever);
 
 Q_SIGNALS:
-    void passwordModifyFinished(const int exitCode, const QString &errorTxt) const;
+    void passwordModifyFinished(const int exitCode, const bool domainUser, const QString &errorTxt) const;
     void nameChanged(const QString &name) const;
     void fullnameChanged(const QString &name) const;
     void currentAvatarChanged(const QString &avatar) const;
