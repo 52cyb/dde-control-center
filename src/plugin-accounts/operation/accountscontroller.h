@@ -23,6 +23,7 @@ class AccountsController : public QObject
     Q_PROPERTY(QStringList userIdList READ userIdList NOTIFY userIdListChanged FINAL)
     Q_PROPERTY(QStringList onlineUserList READ onlineUserList NOTIFY onlineUserListChanged FINAL)
     Q_PROPERTY(bool isQuickLoginVisible READ isQuickLoginVisible NOTIFY quickLoginVisibleChanged FINAL)
+    Q_PROPERTY(bool hideUserlistForNonadmin READ hideUserlistForNonadmin NOTIFY hideUserlistForNonadminChanged FINAL)
 public:
     explicit AccountsController(QObject *parent = nullptr);
     virtual ~AccountsController();
@@ -53,6 +54,7 @@ public slots:
     void setAutoLogin(const QString &id, const bool enable);
     QString getOtherUserAutoLogin() const;
     bool isQuickLoginVisible() const;
+    bool hideUserlistForNonadmin() const;
     bool quickLogin(const QString &id) const;
     void setQuickLogin(const QString &id, const bool enable);
     bool isNoPassWordLoginVisable() const;
@@ -123,6 +125,7 @@ signals:
     void showSafetyPage(const QString &errorTips);
     void accountCreationFinished(CreationResult::ResultType resultType, const QString &message);
     void quickLoginVisibleChanged();
+    void hideUserlistForNonadminChanged();
 protected:
     bool isSystemAdmin(const User *user) const;
     int adminCount() const;

@@ -69,13 +69,24 @@ AccountsWorker::AccountsWorker(UserModel *userList, QObject *parent)
     , m_syncInter(new SyncDBusProxy(this))
     , m_securityInter(new SecurityDBusProxy(this))
     , m_userModel(userList)
-    , m_accountCfg(DConfig::create("org.deepin.dde.daemon", "org.deepin.dde.daemon.account", QString(), this))
+    , m_daemonAccountCfg(DConfig::create("org.deepin.dde.daemon", "org.deepin.dde.daemon.account", QString(), this))
+    , m_accountCfg(DConfig::create("org.deepin.dde.control-center", "org.deepin.dde.control-center.accounts", QString(), this))
 {
     struct passwd *pws;
     pws = getpwuid(getuid());
     m_currentUserName = QString(pws->pw_name);
     m_userModel->setCurrentUserName(m_currentUserName);
     m_userModel->setIsSecurityHighLever(hasOpenSecurity());
+
+    // 非管理员隐藏用户列表配置，须在用户数据加载前初始化
+    if (m_accountCfg && m_accountCfg->isValid()) {
+        m_userModel->setHideUserlistForNonadmin(m_accountCfg->value("hideUserlistForNonadmin", false).toBool());
+        connect(m_accountCfg, &DConfig::valueChanged, this, [this](const QString &key) {
+            if (key == QLatin1String("hideUserlistForNonadmin")) {
+                m_userModel->setHideUserlistForNonadmin(m_accountCfg->value("hideUserlistForNonadmin", false).toBool());
+            }
+        });
+    }
 
     connect(m_accountsInter, &AccountsDBusProxy::UserListChanged, this, &AccountsWorker::onUserListChanged, Qt::QueuedConnection);
     connect(m_accountsInter, &AccountsDBusProxy::GroupListChanged, this, &AccountsWorker::onGroupListChanged, Qt::QueuedConnection);
@@ -1044,8 +1055,8 @@ QString AccountsWorker::cryptUserPassword(const QString &password)
 {
     // 从 dconfig 获取加密算法，如果获取失败或不存在则默认为 sm3
     QString algorithm = "sm3";
-    if (m_accountCfg && m_accountCfg->isValid()) {
-        algorithm = m_accountCfg->value("passwordEncryptionAlgorithm", "sm3").toString();
+    if (m_daemonAccountCfg && m_daemonAccountCfg->isValid()) {
+        algorithm = m_daemonAccountCfg->value("passwordEncryptionAlgorithm", "sm3").toString();
         if (algorithm.isEmpty()) {
             algorithm = "sm3";
         }

@@ -122,7 +122,8 @@ private:
     QString m_currentUserName;
     QStringList m_onlineUsers;
     UserModel *m_userModel;
-    Dtk::Core::DConfig *m_accountCfg;
+    Dtk::Core::DConfig *m_daemonAccountCfg;
+    Dtk::Core::DConfig *m_accountCfg = nullptr;
 };
 
 }   // namespace dccV25
